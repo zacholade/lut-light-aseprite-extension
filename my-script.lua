@@ -16,7 +16,7 @@ end
 function applyGradientMap(sprite, gradientMap, lightLevel)
     local lightLevelImage = Image(sprite.spec)
     local normalImage = Image{width=sprite.width, height=sprite.height, colormode=sprite.colorMode}
-    normalImage:drawSprite(sprite, app.frame.frameNumber, Point(0, 0))
+    normalImage:drawSprite(sprite, app.site.frameNumber or 1, Point(0, 0))
     for y = 0, sprite.height - 1 do
         for x = 0, sprite.width - 1 do
             local pixelColor = normalImage:getPixel(x, y)
@@ -45,86 +45,133 @@ function findSpriteByName(name)
 end
 
 
+function init(plugin)
+    plugin:newCommand{
+        id="aesprite_lut_light",
+        title="Open Lut Light Dialogue",
+        group="foo",
+        onclick=OpenDialogue,
+        onenabled=OpenDialogue,
+    }
+end
+
 
 -- Main dialog window
-Dlg = Dialog("Gradient Map Preview")
+-- Dlg = Dialogue("LutLight Preview")
+CURRENT_SPRITE = "<Currently open sprite>"
+CanvasScale = 8
 GradientListenerCode = nil
 SpriteListenerCode = nil
+CurrentSpriteName = CURRENT_SPRITE
+GradientSpriteName = nil
+CurrentSprite = app.sprite
+GradientSprite = nil
 
 
-local canvasScale = 6
-
-local sprite_names = {}
-for _, sprite in ipairs(app.sprites) do
-    table.insert(sprite_names, sprite.filename)
+function SpriteNames()
+    local spriteNames = {}
+    for _, sprite in ipairs(app.sprites) do
+        table.insert(spriteNames, sprite.filename)
+    end
+    return spriteNames
 end
 
-if next(sprite_names) == nil then
-    Dlg:label{ id="warning", label="Cannot load gradient map", text="No sprites are currently open to select"}
-    return Dlg
-end
 
-
-function repaint()
+function Repaint()
     Dlg:repaint()
 end
 
 
-function updateCanvas(ev)
+function UpdateCanvas(ev)
     local gc = ev.context
-    local gradientSprite = findSpriteByName(Dlg.data.gradient_map_sprite_name)
     local lightLevel = Dlg.data.light_level
-
-    if gradientSprite == nil then
-        print("Failed to find gradient map sprite open")
+    GradientSpriteName = Dlg.data.gradient_map_sprite_name
+    GradientSprite = findSpriteByName(GradientSpriteName)
+    CurrentSpriteName = Dlg.data.current_sprite
+    if CurrentSpriteName == CURRENT_SPRITE then
+        CurrentSprite = app.sprite
+    else
+        CurrentSprite = findSpriteByName(CurrentSpriteName)
     end
 
-    local gradientMap = loadGradientMap(gradientSprite)
-    local newImage = applyGradientMap(app.sprite, gradientMap, lightLevel)
-    newImage:resize(newImage.width * canvasScale, newImage.height * canvasScale)
+    if GradientSprite == nil or CurrentSprite == nil then
+        return
+    end
+
+    local gradientMap = loadGradientMap(GradientSprite)
+    local newImage = applyGradientMap(CurrentSprite, gradientMap, lightLevel)
+    newImage:resize(newImage.width * CanvasScale, newImage.height * CanvasScale)
     gc:drawImage(newImage, 0, 0)
-    if SpriteListenerCode ~= nil then
-        app.sprite.events:off(SpriteListenerCode)
-    end
-    if GradientListenerCode ~= nil then
-        gradientSprite.events:off(GradientListenerCode)
-    end
 
-    GradientListenerCode = gradientSprite.events:on("change", repaint)
-    SpriteListenerCode = app.sprite.events:on("change", repaint)
 end
 
-Dlg:combobox{
-    id = "gradient_map_sprite_name",
-    label = "Gradient Map:",
-    options=sprite_names,
-    option=sprite_names[1],
-    onchange=function()
-        Dlg:modify{id="light_level", max=findSpriteByName(Dlg.data.gradient_map_sprite_name).height - 1}
-        Dlg:repaint()
+function UpdateDlg(ev)
+    if SpriteListenerCode ~= nil and CurrentSprite ~= nil then
+        CurrentSprite.events:off(SpriteListenerCode)
     end
-}
+    if GradientListenerCode ~= nil and GradientSprite ~= nil then
+        GradientSprite.events:off(GradientListenerCode)
+    end
 
-Dlg:slider {
-    id = "light_level",
-    label = "Light Level:",
-    min = 0,
-    max = findSpriteByName(Dlg.data.gradient_map_sprite_name).height - 1,
-    value = 0,
-    onchange=function() Dlg:repaint() end
-}
+    UpdateCanvas(ev)
 
-Dlg:canvas {
-    width=app.sprite.width * canvasScale,
-    height=app.sprite.height * canvasScale,
-    onpaint=updateCanvas,
-    onmousekeydown=function() Dlg:repaint() end,
-    autoscaling=true
-}
+    if CurrentSprite ~= nil then
+        SpriteListenerCode = CurrentSprite.events:on("change", Repaint)
+    end
+    if GradientSprite ~= nil then
+        GradientListenerCode = GradientSprite.events:on("change", Repaint)
+    end
+
+end
 
 
--- gradientSprite.events:off(repaint)
-print('off eventd')
-app.events:on("sitechange", repaint)
-print('done events')
-Dlg:show{wait=false}
+function OpenDialogue()
+    if CurrentSprite == nil then
+        return
+    end
+    Dlg = Dialog("LutLight Preview")
+
+    Dlg:combobox{
+        id = "gradient_map_sprite_name",
+        label = "Gradient Map:",
+        options=SpriteNames(),
+        option=next(SpriteNames()),
+        onchange=function()
+            Dlg:modify{id="light_level", max=findSpriteByName(Dlg.data.gradient_map_sprite_name).height - 1}
+            Dlg:repaint()
+        end
+    }
+
+    Dlg:combobox{
+        id = "current_sprite",
+        label = "Current Sprite:",
+        options={CURRENT_SPRITE, table.unpack(SpriteNames())},
+        option=CURRENT_SPRITE,
+        onchange=Repaint
+    }
+
+    Dlg:slider{
+        id = "light_level",
+        label = "Light Level:",
+        min = 0,
+        max = findSpriteByName(Dlg.data.gradient_map_sprite_name).height - 1,
+        value = 0,
+        onchange=Repaint
+    }
+
+    Dlg:canvas{
+        width=CurrentSprite.width * CanvasScale,
+        height=CurrentSprite.height * CanvasScale,
+        onpaint=UpdateDlg,
+        onmousekeydown=Repaint,
+        autoscaling=true
+    }
+    Dlg:show{wait=false}
+
+end
+
+app.events:on("sitechange",
+    function()
+        Repaint()
+    end
+)
